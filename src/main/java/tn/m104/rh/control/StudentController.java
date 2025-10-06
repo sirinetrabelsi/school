@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 import tn.m104.rh.entity.Student;
 import tn.m104.rh.service.IStudentService;
+import io.swagger.v3.*;
 
 @RestController
 @AllArgsConstructor
