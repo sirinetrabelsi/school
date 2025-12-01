@@ -1,0 +1,228 @@
+pipeline {
+    agent any
+
+    environment {
+        // Git repository configuration
+        GIT_REPO = 'https://github.com/yourusername/school.git'
+        GIT_BRANCH = 'main'
+        
+        // Maven configuration
+        MAVEN_HOME = tool 'Maven-3.9.0'
+        MAVEN_OPTS = '-Xmx1024m -Xms512m'
+        PATH = "${MAVEN_HOME}/bin:${PATH}"
+        
+        // SonarQube configuration
+        SONARQUBE_SERVER = 'SonarQube'
+        SONARQUBE_PROJECT_KEY = 'tn.m104.rh:school'
+        SONARQUBE_PROJECT_NAME = 'School Application'
+        
+        // Nexus configuration
+        NEXUS_URL = 'http://localhost:8081'
+        NEXUS_REPO_ID = 'deploymentRepo'
+        NEXUS_REPO_URL = 'http://localhost:8081/repository/maven-releases/'
+        
+        // Application configuration
+        ARTIFACT_NAME = 'school'
+        ARTIFACT_VERSION = '1.0.0'
+        BUILD_DIR = 'target'
+    }
+
+    options {
+        timestamps()
+        timeout(time: 1, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+        stage('Git Checkout') {
+            steps {
+                script {
+                    echo "============= Git Checkout Stage ============="
+                    try {
+                        // Clean workspace before checkout
+                        deleteDir()
+                        
+                        // Clone from repository
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "*/${GIT_BRANCH}"]],
+                            userRemoteConfigs: [[url: GIT_REPO]]
+                        ])
+                        
+                        echo "✓ Git checkout completed successfully"
+                        echo "Repository: ${GIT_REPO}"
+                        echo "Branch: ${GIT_BRANCH}"
+                    } catch (Exception e) {
+                        echo "✗ Git checkout failed: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Git checkout failed")
+                    }
+                }
+            }
+        }
+
+        stage('Build & Compile') {
+            steps {
+                script {
+                    echo "============= Build & Compile Stage ============="
+                    try {
+                        echo "Running Maven clean package..."
+                        sh '''
+                            mvn clean package -DskipTests \
+                                -X \
+                                -Dmaven.test.skip=true \
+                                -Dorg.slf4j.simpleLogger.defaultLogLevel=info
+                        '''
+                        
+                        echo "✓ Build and compilation completed successfully"
+                        
+                        // Verify JAR was created
+                        if (fileExists("${BUILD_DIR}/${ARTIFACT_NAME}-${ARTIFACT_VERSION}.jar")) {
+                            echo "✓ JAR file created: ${ARTIFACT_NAME}-${ARTIFACT_VERSION}.jar"
+                        } else {
+                            error("JAR file not found in ${BUILD_DIR}")
+                        }
+                    } catch (Exception e) {
+                        echo "✗ Build failed: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Maven build failed")
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    echo "============= SonarQube Analysis Stage ============="
+                    try {
+                        withSonarQubeEnv('${SONARQUBE_SERVER}') {
+                            sh '''
+                                mvn sonar:sonar \
+                                    -Dsonar.projectKey=${SONARQUBE_PROJECT_KEY} \
+                                    -Dsonar.projectName="${SONARQUBE_PROJECT_NAME}" \
+                                    -Dsonar.host.url=${SONAR_HOST_URL} \
+                                    -Dsonar.login=${SONAR_AUTH_TOKEN} \
+                                    -Dsonar.sources=src/main/java \
+                                    -Dsonar.tests=src/test/java \
+                                    -Dsonar.exclusions=**/target/**
+                            '''
+                        }
+                        
+                        echo "✓ SonarQube analysis completed"
+                        
+                        // Quality Gate check
+                        timeout(time: 5, unit: 'MINUTES') {
+                            def qg = waitForQualityGate()
+                            if (qg.status != 'OK') {
+                                echo "⚠ SonarQube Quality Gate failed"
+                                currentBuild.result = 'UNSTABLE'
+                            } else {
+                                echo "✓ SonarQube Quality Gate passed"
+                            }
+                        }
+                    } catch (Exception e) {
+                        echo "✗ SonarQube analysis failed: ${e.message}"
+                        currentBuild.result = 'UNSTABLE'
+                    }
+                }
+            }
+        }
+
+        stage('JUnit & Mockito Tests') {
+            steps {
+                script {
+                    echo "============= JUnit & Mockito Tests Stage ============="
+                    try {
+                        echo "Running JUnit tests with Mockito..."
+                        sh '''
+                            mvn test \
+                                -Dorg.slf4j.simpleLogger.defaultLogLevel=info \
+                                -X
+                        '''
+                        
+                        echo "✓ JUnit tests completed"
+                    } catch (Exception e) {
+                        echo "✗ Test execution failed: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Tests failed")
+                    }
+                }
+            }
+            post {
+                always {
+                    // Generate and publish test reports
+                    junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true
+                    
+                    // Generate test report summary
+                    script {
+                        if (fileExists('target/surefire-reports')) {
+                            echo "✓ Test reports published"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Nexus') {
+            steps {
+                script {
+                    echo "============= Deploy to Nexus Stage ============="
+                    try {
+                        echo "Deploying artifact to Nexus repository..."
+                        
+                        // Configure Maven credentials for Nexus
+                        withCredentials([usernamePassword(credentialsId: 'nexus-credentials', 
+                                                          usernameVariable: 'NEXUS_USER', 
+                                                          passwordVariable: 'NEXUS_PASS')]) {
+                            sh '''
+                                mvn deploy \
+                                    -DskipTests \
+                                    -Dorg.slf4j.simpleLogger.defaultLogLevel=info \
+                                    -Dpom.version=${ARTIFACT_VERSION}
+                            '''
+                        }
+                        
+                        echo "✓ Deployment to Nexus completed successfully"
+                        echo "Artifact: ${ARTIFACT_NAME}-${ARTIFACT_VERSION}.jar"
+                        echo "Repository URL: ${NEXUS_REPO_URL}"
+                    } catch (Exception e) {
+                        echo "✗ Deployment failed: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Nexus deployment failed")
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                echo "============= Pipeline Summary ============="
+                echo "Build Status: ${currentBuild.result}"
+                echo "Build Number: ${env.BUILD_NUMBER}"
+                echo "Build URL: ${env.BUILD_URL}"
+                
+                // Archive artifacts
+                archiveArtifacts artifacts: "target/${ARTIFACT_NAME}-${ARTIFACT_VERSION}.jar", 
+                                  allowEmptyArchive: true
+                
+                // Clean workspace if needed (optional)
+                // cleanWs()
+            }
+        }
+        success {
+            echo "✓ Pipeline completed successfully!"
+            // Add notification here (email, Slack, etc.)
+        }
+        failure {
+            echo "✗ Pipeline failed!"
+            // Add notification here (email, Slack, etc.)
+        }
+        unstable {
+            echo "⚠ Pipeline completed with warnings"
+            // Add notification here (email, Slack, etc.)
+        }
+    }
+}
