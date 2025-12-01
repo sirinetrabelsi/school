@@ -15,9 +15,9 @@ pipeline {
         SONARQUBE_PROJECT_NAME = 'School Application'
         
         // Nexus configuration
-        NEXUS_URL = 'http://localhost:8081'
+        NEXUS_URL = 'http://10.106.39.71:8081'
         NEXUS_REPO_ID = 'deploymentRepo'
-        NEXUS_REPO_URL = 'http://localhost:8081/repository/maven-releases/'
+        NEXUS_REPO_URL = 'http://10.106.39.71:8081/repository/maven-releases/'
         
         // Application configuration
         ARTIFACT_NAME = 'school'
