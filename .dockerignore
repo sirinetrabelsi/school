@@ -1,0 +1,64 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# Maven
+.m2/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.maven.metadata.xml
+
+# Gradle
+.gradle/
+build/
+
+# Logs
+*.log
+logs/
+
+# Node (if using frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Docker
+Dockerfile.dev
+docker-compose.override.yml
+.dockerignore
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Test results
+test-results/
+coverage/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+Jenkinsfile

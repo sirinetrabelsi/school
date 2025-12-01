@@ -9,6 +9,11 @@ pipeline {
         // Maven configuration - system mvn is used
         MAVEN_OPTS = '-Xmx1024m -Xms512m'
         
+        // Docker configuration
+        DOCKER_REGISTRY = 'localhost:5000'
+        DOCKER_IMAGE_NAME = 'school'
+        DOCKER_IMAGE_TAG = '${ARTIFACT_VERSION}-${BUILD_NUMBER}'
+        
         // SonarQube configuration
         SONARQUBE_SERVER = 'SonarQube'
         SONARQUBE_PROJECT_KEY = 'tn.m104.rh:school'
@@ -210,6 +215,99 @@ pipeline {
                         echo "✗ Deployment stage failed: ${e.message}"
                         currentBuild.result = 'FAILURE'
                         error("Deploy stage failed")
+                    }
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            when {
+                expression { currentBuild.result != 'FAILURE' }
+            }
+            steps {
+                script {
+                    echo "============= Build Docker Image Stage ============="
+                    try {
+                        echo "Building Docker image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                        sh '''
+                            docker build \
+                                --tag ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} \
+                                --tag ${DOCKER_IMAGE_NAME}:latest \
+                                --build-arg DOCKER_BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+                                --build-arg DOCKER_VCS_REF=$(git rev-parse --short HEAD) \
+                                .
+                        '''
+                        echo "✓ Docker image built successfully"
+                        echo "Image: ${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG}"
+                    } catch (Exception e) {
+                        echo "✗ Docker build failed: ${e.message}"
+                        currentBuild.result = 'FAILURE'
+                        error("Docker build failed")
+                    }
+                }
+            }
+        }
+
+        stage('Docker Compose - Deploy Stack') {
+            when {
+                expression { currentBuild.result != 'FAILURE' }
+            }
+            steps {
+                script {
+                    echo "============= Docker Compose Deployment Stage ============="
+                    try {
+                        echo "Deploying application stack with Docker Compose..."
+                        sh '''
+                            # Stop existing containers if running
+                            docker-compose down || true
+                            
+                            # Build and start services
+                            docker-compose up -d --build
+                            
+                            # Wait for services to be healthy
+                            sleep 10
+                            
+                            # Check service status
+                            docker-compose ps
+                        '''
+                        echo "✓ Docker Compose deployment completed"
+                        echo "Access application at: http://localhost:8080/school"
+                        echo "MySQL: localhost:3306 (school_user/school_password)"
+                        echo "Nexus: http://localhost:8081/nexus"
+                    } catch (Exception e) {
+                        echo "✗ Docker Compose deployment failed: ${e.message}"
+                        currentBuild.result = 'UNSTABLE'
+                        // Don't error out, just mark as unstable
+                    }
+                }
+            }
+        }
+
+        stage('Health Check') {
+            when {
+                expression { currentBuild.result != 'FAILURE' }
+            }
+            steps {
+                script {
+                    echo "============= Health Check Stage ============="
+                    try {
+                        echo "Checking application health..."
+                        sh '''
+                            # Wait for app to be ready
+                            for i in {1..30}; do
+                                if curl -f http://localhost:8080/school/actuator/health; then
+                                    echo "✓ Application is healthy"
+                                    exit 0
+                                fi
+                                echo "Waiting for application to be ready... ($i/30)"
+                                sleep 2
+                            done
+                            echo "✗ Application failed to start"
+                            exit 1
+                        '''
+                    } catch (Exception e) {
+                        echo "⚠ Health check warning: ${e.message}"
+                        currentBuild.result = 'UNSTABLE'
                     }
                 }
             }
